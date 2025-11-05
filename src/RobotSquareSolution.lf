@@ -1,0 +1,198 @@
+/**
+ * Display encoder measurements from the wheels of the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Encoders from "lib/Encoders.lf"
+import AngleToDistance from "lib/AngleToDistance.lf"
+import Motors from "lib/Motors.lf"
+import GyroAngle from "lib/IMU.lf"
+
+preamble {=
+  #include <math.h>
+  
+=}
+
+main reactor {
+  state drive: bool
+  robot = new Robot()
+  display = new Display()
+  display2 = new Display()
+  distance_monitor = new DistanceMonitor()
+  gyro_monitor = new GyroMonitor()
+  robot.notify -> display2.line0
+
+  timer start_delay(1s);
+
+  reaction(start_delay) -> robot.drive,  display.line0 {=
+    lf_set(display.line0, "STARTING");
+    self->drive = true;
+    lf_set(robot.drive, self->drive);    
+  =}
+
+  reaction(distance_monitor.distance_out, gyro_monitor.angle_output) -> display.line1, display.line2, display.line3, robot.drive, distance_monitor.reset_d, gyro_monitor.reset_angle {=
+      printf("distance %.2f, angle %.2f, drive %d\n",
+      distance_monitor.distance_out->value,
+      gyro_monitor.angle_output->value,
+      self->drive);
+
+      static char buf[17];
+      snprintf(buf, 17, "Distance: %.2f", distance_monitor.distance_out->value);
+      lf_set(display.line1, buf);
+
+      static char buf2[17];
+      snprintf(buf2, 17, "Angle: %.2f", gyro_monitor.angle_output->value);
+      lf_set(display.line2, buf2);
+
+      static char buf3[17];
+      snprintf(buf3, 17, "Drive: %d", self->drive);
+      lf_set(display.line3, buf3);
+    
+    if (self->drive && distance_monitor.distance_out->value >= 100.0f) {
+      printf("turning\n");
+      self->drive = false;
+      lf_set(gyro_monitor.reset_angle, true);
+      lf_set(robot.drive, false);
+    }
+
+    // Turn for 90 degrees, then drive.
+    if (!self->drive && gyro_monitor.angle_output->value >= 90.0f) {
+      printf("driving\n");
+      lf_set(distance_monitor.reset_d, true);
+      self->drive = true;
+      lf_set(robot.drive, true);
+    }
+
+    lf_set(gyro_monitor.reset_angle, false);
+    lf_set(distance_monitor.reset_d, false);
+  =}
+}
+
+
+reactor DistanceMonitor {
+
+  encoder = new Encoders()
+
+  input reset_d: bool      // ← external trigger to get new readings and reset
+  output distance_out: float
+
+  state start_left: float = 0.0
+  state start_right: float = 0.0
+
+  angle_to_distance_right = new AngleToDistance()
+  angle_to_distance_left  = new AngleToDistance()
+
+  encoder.right -> angle_to_distance_right.angle_degrees
+  encoder.left  -> angle_to_distance_left.angle_degrees
+
+  timer t(0, 500 ms)
+
+  reaction(t) -> encoder.trigger {=
+    lf_set(encoder.trigger, true);
+  =}
+
+  // recompute distance continuously
+  reaction(angle_to_distance_left.distance_cm,
+           angle_to_distance_right.distance_cm) -> distance_out {=
+    float left_now  = angle_to_distance_left.distance_cm->value;
+    float right_now = angle_to_distance_right.distance_cm->value;
+    float left_diff  = left_now  - self->start_left;
+    float right_diff = right_now - self->start_right;
+    float dist = fmin(left_diff, right_diff);
+    lf_set(distance_out, dist);
+  =}
+
+  // take new “snapshot” only when external trigger arrives
+  reaction(reset_d,
+           angle_to_distance_left.distance_cm,
+           angle_to_distance_right.distance_cm) {=
+    if (reset_d->value) {
+        float left_now  = angle_to_distance_left.distance_cm->value;
+        float right_now = angle_to_distance_right.distance_cm->value;
+        self->start_left  = left_now;
+        self->start_right = right_now;
+        printf("Snapshot + Reset: L=%.2f, R=%.2f\n",
+               left_now, right_now);
+    }
+  =}
+}
+
+reactor GyroMonitor {
+
+  gyro = new GyroAngle()
+
+  state reference_angle: float      // Reference at reset
+  state current_angle: float        // Most recent raw angle reading
+
+  output angle_output: float
+  input reset_angle: bool
+
+  timer t(0, 500 ms)         
+
+  reaction(t) -> gyro.trigger {=
+    lf_set(gyro.trigger, true);
+  =}
+
+  reaction(gyro.z) -> angle_output {=
+    self->current_angle = gyro.z->value;
+
+    float diff = self->current_angle - self->reference_angle;
+
+    if (diff > 180.0f) diff -= 360.0f;
+    if (diff < -180.0f) diff += 360.0f;
+
+    diff = fabsf(diff);
+
+    lf_set(angle_output, diff);
+  =}
+
+  reaction(reset_angle) {=
+    if(reset_angle->value) {
+      printf("resseting angle!!! \n");
+      self->reference_angle = self->current_angle;
+    }
+  =}
+}
+
+reactor Robot {
+  input drive: bool      // Toggle mode.
+  input stop: bool
+  output notify: string  // Notify of mode change.
+
+  state distance: float
+
+  motors = new Motors()
+  display = new Display()
+
+  initial mode TURNING {
+    reaction(drive) -> reset(DRIVING), notify, motors.left_power, motors.right_power {=
+      if (drive->value) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(motors.left_power, 0.2f);
+        lf_set(motors.right_power, 0.2f);
+      } 
+    =}
+  }
+
+  mode DRIVING {
+    reaction(drive) -> reset(TURNING), notify, motors.left_power, motors.right_power {=
+      if (!drive->value) {
+        lf_set_mode(TURNING);
+        lf_set(notify, "Turning");
+        lf_set(motors.left_power, 0.2f);
+        lf_set(motors.right_power, -0.2f);
+      }
+    =}
+  }
+}

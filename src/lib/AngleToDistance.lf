@@ -1,0 +1,28 @@
+
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+preamble {=
+  #include <math.h>
+  // others
+=}
+
+reactor AngleToDistance {
+  input angle_degrees: int32_t
+  output distance_cm: float
+
+  preamble {=
+    #define WHEEL_DIAMETER_CM 3.175f // Distance between wheels in cm.
+  =}
+
+  reaction(angle_degrees) -> distance_cm {=
+    float distance = ((float)angle_degrees->value/360.0) * WHEEL_DIAMETER_CM * M_PI;
+    printf("RAW A=%.1f -> %.2f cm\n", (float)angle_degrees->value, distance);
+    lf_set(distance_cm, distance);
+  =}
+}

@@ -1,0 +1,159 @@
+/**
+ * Display encoder measurements from the wheels of the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true,
+  keepalive: true
+}
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+import Encoders from "lib/Encoders.lf"
+import AngleToDistance from "lib/AngleToDistance.lf"
+import GyroAngle from "lib/IMU.lf"
+
+preamble {=
+  #include <math.h>  
+=}
+
+main reactor {
+  state drive: int
+  robot = new Robot()
+  display = new Display()
+  robot.notify -> display.line0
+}
+
+
+reactor Robot {
+  state next: int
+  output notify: string
+  motors = new Motors()
+
+  timer robot_start_delay(3s);
+
+  reaction(startup) -> notify, change {=    
+    lf_set(notify, "STARTING...");
+    self->next = 1;
+    lf_schedule(change, MSEC(3000));
+  =}
+
+  /** initial mode **/
+  initial mode STOPPED {
+    timer start_delay(0s);
+    logical action change
+
+    reaction(change) -> reset(DRIVING), reset(TURNING), notify, motors.left_power, motors.right_power {=
+      printf("CHANGING, %d", self->next);
+      if (self->next == 1) {
+        lf_set_mode(DRIVING);
+      }
+      if (self->next == 2) {
+       lf_set_mode(TURNING);
+      }
+    =}
+
+    reaction(start_delay) -> reset(DRIVING), notify, motors.left_power, motors.right_power, change {=
+      printf("STOPPED!!!!\n");
+      lf_set(notify, "STOPPED");
+      lf_set(motors.left_power, 0.0f);
+      lf_set(motors.right_power, 0.0f);
+      lf_schedule(change, MSEC(200));
+    =}
+
+
+  }
+
+  mode DRIVING {
+    encoder = new Encoders()
+
+    angle_to_distance_right = new AngleToDistance()
+    angle_to_distance_left = new AngleToDistance()
+
+    timer t(0, 1 ms)
+
+    encoder.right -> angle_to_distance_right.angle_degrees
+    encoder.left -> angle_to_distance_left.angle_degrees
+    reset state left: float = 0
+    reset state right: float = 0
+    reset state baseline: bool = false
+
+    timer start_delay_d(0s);
+
+
+    reaction(t) -> encoder.trigger {=
+      lf_set(encoder.trigger, true);
+    =}
+
+    reaction(start_delay_d) -> notify, motors.left_power, motors.right_power{=
+        printf("Driving!! \n");
+        lf_set(notify, "DRIVING");
+        lf_set(motors.left_power, 0.2f);
+        lf_set(motors.right_power, 0.2f);
+    =}
+
+    reaction(angle_to_distance_left.distance_cm, angle_to_distance_right.distance_cm) -> reset(STOPPED), notify{=
+      lf_set(notify, "DRIVING+ENCODER");
+      
+      if(!self->baseline) {
+        self->left = angle_to_distance_left.distance_cm->value;
+        self->right = angle_to_distance_right.distance_cm->value;
+        printf("BASELINE LEFT %.2f, BASELINE RIGHT %.2f \n", self->left, self->right);
+        self->baseline = true;
+      }
+
+      float left_d = angle_to_distance_left.distance_cm->value - self->left;
+      float right_d = angle_to_distance_right.distance_cm->value - self->right;
+
+      printf("LEFT %.2f, RIGHT %.2f \n", left_d, right_d);
+      if(left_d >= 50.0f || right_d >= 50.0f) {
+        lf_set(notify, "SWITCHING TO STOPPED");
+        self->next = 2;
+        lf_set_mode(STOPPED);
+      }
+    =}
+  }
+
+mode TURNING {
+    gyro = new GyroAngle()
+
+    timer start_delay_t(0s)
+    timer t2(0, 200 ms)
+
+    reset state angle: float = 0
+    reset state baseline_a: bool = false
+
+    reaction(t2) -> gyro.trigger {=
+        lf_set(gyro.trigger, true);
+    =}
+
+    reaction(start_delay_t) -> notify, motors.left_power, motors.right_power {=
+        printf("Turning!!\n");
+        lf_set(notify, "TURNING");
+        lf_set(motors.left_power, -0.1f);
+        lf_set(motors.right_power, 0.1f);
+    =}
+
+    reaction(gyro.z) -> reset(STOPPED), notify {=
+        lf_set(notify, "TURNING+GYRO");
+        if (!self->baseline_a) {
+            self->angle = gyro.z->value;
+            printf("BASELINE %.2f", self->angle);
+            self->baseline_a = true;
+        }
+        float diff = gyro.z->value - self->angle;
+        printf("ANGLE: %.2f", diff);
+        if (diff >= 80.0f) {
+            lf_set(notify, "SWITCHING TO STOPPED");
+            self->next = 1;
+            lf_set_mode(STOPPED);
+        }
+    =}
+}
+}
