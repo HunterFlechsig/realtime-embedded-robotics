@@ -186,7 +186,7 @@ mode TURNING {
       lf_set(notify, "REVERSING");
       lf_set(motors.left_power, -0.1f);
       lf_set(motors.right_power, -0.1f);
-      lf_schedule(stop_reverse, MSEC(1000));
+      lf_schedule(stop_reverse, MSEC(750));
     =}
 
     reaction(stop_reverse) -> reset(STOPPED), notify {=
