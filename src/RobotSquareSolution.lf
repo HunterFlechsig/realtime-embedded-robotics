@@ -124,7 +124,7 @@ mode TURNING {
     gyro = new GyroAngle()
 
     timer start_delay_t(0s)
-    timer t2(0, 200 ms)
+    timer t2(0, 50 ms)
 
     reset state angle: float = 0
     reset state baseline_a: bool = false
