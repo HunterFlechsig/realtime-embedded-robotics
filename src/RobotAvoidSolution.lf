@@ -18,6 +18,7 @@ import Motors from "lib/Motors.lf"
 import Encoders from "lib/Encoders.lf"
 import AngleToDistance from "lib/AngleToDistance.lf"
 import GyroAngle from "lib/IMU.lf"
+import Bump from "lib/Bump.lf"
 
 preamble {=
   #include <math.h>  
@@ -32,16 +33,19 @@ main reactor {
 
 
 reactor Robot {
-  state next: int
+  state next: int = 0
   output notify: string
   motors = new Motors()
 
   timer robot_start_delay(3s);
 
-  reaction(startup) -> notify, change {=    
-    lf_set(notify, "STARTING...");
+  reaction(startup) -> notify {=    
+      lf_set(notify, "STARTING...");
+  =}
+
+  reaction(robot_start_delay) -> notify, change {=    
     self->next = 1;
-    lf_schedule(change, MSEC(3000));
+    lf_schedule(change, MSEC(0));
   =}
 
   /** initial mode **/
@@ -49,7 +53,7 @@ reactor Robot {
     timer start_delay(0s);
     logical action change
 
-    reaction(change) -> reset(DRIVING), reset(TURNING), notify, motors.left_power, motors.right_power {=
+    reaction(change) -> reset(DRIVING), reset(TURNING), reset(REVERSE), notify, motors.left_power, motors.right_power {=
       printf("CHANGING, %d", self->next);
       if (self->next == 1) {
         lf_set_mode(DRIVING);
@@ -57,26 +61,30 @@ reactor Robot {
       if (self->next == 2) {
        lf_set_mode(TURNING);
       }
+      if (self->next == 3) {
+       lf_set_mode(REVERSE);
+      }
     =}
 
     reaction(start_delay) -> reset(DRIVING), notify, motors.left_power, motors.right_power, change {=
-      printf("STOPPED!!!!\n");
-      lf_set(notify, "STOPPED");
-      lf_set(motors.left_power, 0.0f);
-      lf_set(motors.right_power, 0.0f);
-      lf_schedule(change, MSEC(200));
+      if (self->next != 0) {
+        printf("STOPPED!!!!\n");
+        lf_set(notify, "STOPPED");
+        lf_set(motors.left_power, 0.0f);
+        lf_set(motors.right_power, 0.0f);
+        lf_schedule(change, MSEC(200));
+      }    
     =}
-
-
   }
 
   mode DRIVING {
     encoder = new Encoders()
+    bump = new Bump(sample_period = 5 ms)
 
     angle_to_distance_right = new AngleToDistance()
     angle_to_distance_left = new AngleToDistance()
 
-    timer t(0, 1 ms)
+    timer t(0, 100 ms)
 
     encoder.right -> angle_to_distance_right.angle_degrees
     encoder.left -> angle_to_distance_left.angle_degrees
@@ -91,11 +99,11 @@ reactor Robot {
       lf_set(encoder.trigger, true);
     =}
 
-    reaction(start_delay_d) -> notify, motors.left_power, motors.right_power{=
+    reaction(start_delay_d) -> notify, motors.left_power, motors.right_power, bump.calibrate{=
         printf("Driving!! \n");
         lf_set(notify, "DRIVING");
-        lf_set(motors.left_power, 0.2f);
-        lf_set(motors.right_power, 0.2f);
+        lf_set(motors.left_power, 0.3f);
+        lf_set(motors.right_power, 0.3f);
     =}
 
     reaction(angle_to_distance_left.distance_cm, angle_to_distance_right.distance_cm) -> reset(STOPPED), notify{=
@@ -117,6 +125,18 @@ reactor Robot {
         self->next = 2;
         lf_set_mode(STOPPED);
       }
+    =}
+
+    reaction(bump.left) -> reset(STOPPED), notify {=
+        lf_set(notify, "BUMPED!");
+        self->next = 3;
+        lf_set_mode(STOPPED);
+    =}
+
+    reaction(bump.right) -> reset(STOPPED), notify {=
+        lf_set(notify, "BUMPED!");
+        self->next = 3;
+        lf_set_mode(STOPPED);
     =}
   }
 
@@ -155,5 +175,25 @@ mode TURNING {
             lf_set_mode(STOPPED);
         }
     =}
-}
+  }
+
+  mode REVERSE {
+    timer start_delay_r(0s)
+    logical action stop_reverse
+
+    reaction(start_delay_r) -> notify, motors.left_power, motors.right_power, stop_reverse {=
+      printf("Reversing!!\n");
+      lf_set(notify, "REVERSING");
+      lf_set(motors.left_power, -0.1f);
+      lf_set(motors.right_power, -0.1f);
+      lf_schedule(stop_reverse, MSEC(1000));
+    =}
+
+    reaction(stop_reverse) -> reset(STOPPED), notify {=
+      printf("STOP REVERSING!!\n");
+      lf_set(notify, "STOP REVERSING");
+      self->next = 2;
+      lf_set_mode(STOPPED);
+    =}
+  }
 }

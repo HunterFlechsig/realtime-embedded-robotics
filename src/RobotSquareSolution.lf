@@ -9,190 +9,151 @@ target C {
     name: "rp2040",
     board: "pololu_3pi_2040_robot"
   },
-  single-threaded: true
+  single-threaded: true,
+  keepalive: true
 }
 
 import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
 import Encoders from "lib/Encoders.lf"
 import AngleToDistance from "lib/AngleToDistance.lf"
-import Motors from "lib/Motors.lf"
 import GyroAngle from "lib/IMU.lf"
 
 preamble {=
-  #include <math.h>
-  
+  #include <math.h>  
 =}
 
 main reactor {
-  state drive: bool
+  state drive: int
   robot = new Robot()
   display = new Display()
-  display2 = new Display()
-  distance_monitor = new DistanceMonitor()
-  gyro_monitor = new GyroMonitor()
-  robot.notify -> display2.line0
-
-  timer start_delay(1s);
-
-  reaction(start_delay) -> robot.drive,  display.line0 {=
-    lf_set(display.line0, "STARTING");
-    self->drive = true;
-    lf_set(robot.drive, self->drive);    
-  =}
-
-  reaction(distance_monitor.distance_out, gyro_monitor.angle_output) -> display.line1, display.line2, display.line3, robot.drive, distance_monitor.reset_d, gyro_monitor.reset_angle {=
-      printf("distance %.2f, angle %.2f, drive %d\n",
-      distance_monitor.distance_out->value,
-      gyro_monitor.angle_output->value,
-      self->drive);
-
-      static char buf[17];
-      snprintf(buf, 17, "Distance: %.2f", distance_monitor.distance_out->value);
-      lf_set(display.line1, buf);
-
-      static char buf2[17];
-      snprintf(buf2, 17, "Angle: %.2f", gyro_monitor.angle_output->value);
-      lf_set(display.line2, buf2);
-
-      static char buf3[17];
-      snprintf(buf3, 17, "Drive: %d", self->drive);
-      lf_set(display.line3, buf3);
-    
-    if (self->drive && distance_monitor.distance_out->value >= 100.0f) {
-      printf("turning\n");
-      self->drive = false;
-      lf_set(gyro_monitor.reset_angle, true);
-      lf_set(robot.drive, false);
-    }
-
-    // Turn for 90 degrees, then drive.
-    if (!self->drive && gyro_monitor.angle_output->value >= 90.0f) {
-      printf("driving\n");
-      lf_set(distance_monitor.reset_d, true);
-      self->drive = true;
-      lf_set(robot.drive, true);
-    }
-
-    lf_set(gyro_monitor.reset_angle, false);
-    lf_set(distance_monitor.reset_d, false);
-  =}
+  robot.notify -> display.line0
 }
 
-
-reactor DistanceMonitor {
-
-  encoder = new Encoders()
-
-  input reset_d: bool      // ← external trigger to get new readings and reset
-  output distance_out: float
-
-  state start_left: float = 0.0
-  state start_right: float = 0.0
-
-  angle_to_distance_right = new AngleToDistance()
-  angle_to_distance_left  = new AngleToDistance()
-
-  encoder.right -> angle_to_distance_right.angle_degrees
-  encoder.left  -> angle_to_distance_left.angle_degrees
-
-  timer t(0, 500 ms)
-
-  reaction(t) -> encoder.trigger {=
-    lf_set(encoder.trigger, true);
-  =}
-
-  // recompute distance continuously
-  reaction(angle_to_distance_left.distance_cm,
-           angle_to_distance_right.distance_cm) -> distance_out {=
-    float left_now  = angle_to_distance_left.distance_cm->value;
-    float right_now = angle_to_distance_right.distance_cm->value;
-    float left_diff  = left_now  - self->start_left;
-    float right_diff = right_now - self->start_right;
-    float dist = fmin(left_diff, right_diff);
-    lf_set(distance_out, dist);
-  =}
-
-  // take new “snapshot” only when external trigger arrives
-  reaction(reset_d,
-           angle_to_distance_left.distance_cm,
-           angle_to_distance_right.distance_cm) {=
-    if (reset_d->value) {
-        float left_now  = angle_to_distance_left.distance_cm->value;
-        float right_now = angle_to_distance_right.distance_cm->value;
-        self->start_left  = left_now;
-        self->start_right = right_now;
-        printf("Snapshot + Reset: L=%.2f, R=%.2f\n",
-               left_now, right_now);
-    }
-  =}
-}
-
-reactor GyroMonitor {
-
-  gyro = new GyroAngle()
-
-  state reference_angle: float      // Reference at reset
-  state current_angle: float        // Most recent raw angle reading
-
-  output angle_output: float
-  input reset_angle: bool
-
-  timer t(0, 500 ms)         
-
-  reaction(t) -> gyro.trigger {=
-    lf_set(gyro.trigger, true);
-  =}
-
-  reaction(gyro.z) -> angle_output {=
-    self->current_angle = gyro.z->value;
-
-    float diff = self->current_angle - self->reference_angle;
-
-    if (diff > 180.0f) diff -= 360.0f;
-    if (diff < -180.0f) diff += 360.0f;
-
-    diff = fabsf(diff);
-
-    lf_set(angle_output, diff);
-  =}
-
-  reaction(reset_angle) {=
-    if(reset_angle->value) {
-      printf("resseting angle!!! \n");
-      self->reference_angle = self->current_angle;
-    }
-  =}
-}
 
 reactor Robot {
-  input drive: bool      // Toggle mode.
-  input stop: bool
-  output notify: string  // Notify of mode change.
-
-  state distance: float
-
+  state next: int
+  output notify: string
   motors = new Motors()
-  display = new Display()
 
-  initial mode TURNING {
-    reaction(drive) -> reset(DRIVING), notify, motors.left_power, motors.right_power {=
-      if (drive->value) {
+  timer robot_start_delay(3s);
+
+  reaction(startup) -> notify, change {=    
+    lf_set(notify, "STARTING...");
+    self->next = 1;
+    lf_schedule(change, MSEC(3000));
+  =}
+
+  /** initial mode **/
+  initial mode STOPPED {
+    timer start_delay(0s);
+    logical action change
+
+    reaction(change) -> reset(DRIVING), reset(TURNING), notify, motors.left_power, motors.right_power {=
+      printf("CHANGING, %d", self->next);
+      if (self->next == 1) {
         lf_set_mode(DRIVING);
-        lf_set(notify, "DRIVING");
-        lf_set(motors.left_power, 0.2f);
-        lf_set(motors.right_power, 0.2f);
-      } 
+      }
+      if (self->next == 2) {
+       lf_set_mode(TURNING);
+      }
     =}
+
+    reaction(start_delay) -> reset(DRIVING), notify, motors.left_power, motors.right_power, change {=
+      printf("STOPPED!!!!\n");
+      lf_set(notify, "STOPPED");
+      lf_set(motors.left_power, 0.0f);
+      lf_set(motors.right_power, 0.0f);
+      lf_schedule(change, MSEC(200));
+    =}
+
+
   }
 
   mode DRIVING {
-    reaction(drive) -> reset(TURNING), notify, motors.left_power, motors.right_power {=
-      if (!drive->value) {
-        lf_set_mode(TURNING);
-        lf_set(notify, "Turning");
+    encoder = new Encoders()
+
+    angle_to_distance_right = new AngleToDistance()
+    angle_to_distance_left = new AngleToDistance()
+
+    timer t(0, 1 ms)
+
+    encoder.right -> angle_to_distance_right.angle_degrees
+    encoder.left -> angle_to_distance_left.angle_degrees
+    reset state left: float = 0
+    reset state right: float = 0
+    reset state baseline: bool = false
+
+    timer start_delay_d(0s);
+
+
+    reaction(t) -> encoder.trigger {=
+      lf_set(encoder.trigger, true);
+    =}
+
+    reaction(start_delay_d) -> notify, motors.left_power, motors.right_power{=
+        printf("Driving!! \n");
+        lf_set(notify, "DRIVING");
         lf_set(motors.left_power, 0.2f);
-        lf_set(motors.right_power, -0.2f);
+        lf_set(motors.right_power, 0.2f);
+    =}
+
+    reaction(angle_to_distance_left.distance_cm, angle_to_distance_right.distance_cm) -> reset(STOPPED), notify{=
+      lf_set(notify, "DRIVING+ENCODER");
+      
+      if(!self->baseline) {
+        self->left = angle_to_distance_left.distance_cm->value;
+        self->right = angle_to_distance_right.distance_cm->value;
+        printf("BASELINE LEFT %.2f, BASELINE RIGHT %.2f \n", self->left, self->right);
+        self->baseline = true;
+      }
+
+      float left_d = angle_to_distance_left.distance_cm->value - self->left;
+      float right_d = angle_to_distance_right.distance_cm->value - self->right;
+
+      printf("LEFT %.2f, RIGHT %.2f \n", left_d, right_d);
+      if(left_d >= 50.0f || right_d >= 50.0f) {
+        lf_set(notify, "SWITCHING TO STOPPED");
+        self->next = 2;
+        lf_set_mode(STOPPED);
       }
     =}
   }
+
+mode TURNING {
+    gyro = new GyroAngle()
+
+    timer start_delay_t(0s)
+    timer t2(0, 200 ms)
+
+    reset state angle: float = 0
+    reset state baseline_a: bool = false
+
+    reaction(t2) -> gyro.trigger {=
+        lf_set(gyro.trigger, true);
+    =}
+
+    reaction(start_delay_t) -> notify, motors.left_power, motors.right_power {=
+        printf("Turning!!\n");
+        lf_set(notify, "TURNING");
+        lf_set(motors.left_power, -0.1f);
+        lf_set(motors.right_power, 0.1f);
+    =}
+
+    reaction(gyro.z) -> reset(STOPPED), notify {=
+        lf_set(notify, "TURNING+GYRO");
+        if (!self->baseline_a) {
+            self->angle = gyro.z->value;
+            printf("BASELINE %.2f", self->angle);
+            self->baseline_a = true;
+        }
+        float diff = gyro.z->value - self->angle;
+        printf("ANGLE: %.2f", diff);
+        if (diff >= 80.0f) {
+            lf_set(notify, "SWITCHING TO STOPPED");
+            self->next = 1;
+            lf_set_mode(STOPPED);
+        }
+    =}
+}
 }
