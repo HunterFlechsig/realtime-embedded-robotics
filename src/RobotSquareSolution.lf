@@ -32,16 +32,19 @@ main reactor {
 
 
 reactor Robot {
-  state next: int
+  state next: int = 0
   output notify: string
   motors = new Motors()
 
   timer robot_start_delay(3s);
 
-  reaction(startup) -> notify, change {=    
-    lf_set(notify, "STARTING...");
+  reaction(startup) -> notify {=    
+      lf_set(notify, "STARTING...");
+  =}
+
+  reaction(robot_start_delay) -> notify, change {=    
     self->next = 1;
-    lf_schedule(change, MSEC(3000));
+    lf_schedule(change, MSEC(0));
   =}
 
   /** initial mode **/
@@ -60,14 +63,14 @@ reactor Robot {
     =}
 
     reaction(start_delay) -> reset(DRIVING), notify, motors.left_power, motors.right_power, change {=
-      printf("STOPPED!!!!\n");
-      lf_set(notify, "STOPPED");
-      lf_set(motors.left_power, 0.0f);
-      lf_set(motors.right_power, 0.0f);
-      lf_schedule(change, MSEC(200));
+      if (self->next != 0) {
+        printf("STOPPED!!!!\n");
+        lf_set(notify, "STOPPED");
+        lf_set(motors.left_power, 0.0f);
+        lf_set(motors.right_power, 0.0f);
+        lf_schedule(change, MSEC(200));
+      }    
     =}
-
-
   }
 
   mode DRIVING {
@@ -76,7 +79,7 @@ reactor Robot {
     angle_to_distance_right = new AngleToDistance()
     angle_to_distance_left = new AngleToDistance()
 
-    timer t(0, 1 ms)
+    timer t(0, 100 ms)
 
     encoder.right -> angle_to_distance_right.angle_degrees
     encoder.left -> angle_to_distance_left.angle_degrees
@@ -94,8 +97,8 @@ reactor Robot {
     reaction(start_delay_d) -> notify, motors.left_power, motors.right_power{=
         printf("Driving!! \n");
         lf_set(notify, "DRIVING");
-        lf_set(motors.left_power, 0.2f);
-        lf_set(motors.right_power, 0.2f);
+        lf_set(motors.left_power, 0.3f);
+        lf_set(motors.right_power, 0.3f);
     =}
 
     reaction(angle_to_distance_left.distance_cm, angle_to_distance_right.distance_cm) -> reset(STOPPED), notify{=
@@ -124,7 +127,7 @@ mode TURNING {
     gyro = new GyroAngle()
 
     timer start_delay_t(0s)
-    timer t2(0, 50 ms)
+    timer t2(0, 200 ms)
 
     reset state angle: float = 0
     reset state baseline_a: bool = false
@@ -155,5 +158,5 @@ mode TURNING {
             lf_set_mode(STOPPED);
         }
     =}
-}
+  }
 }
