@@ -1,15 +1,9 @@
 /**
- * Blink the default LED on the
- * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
- * @author Abhi Gundrala
- * @author Edward A. Lee
+ * Blink the onboard LED and print each transition on the USB serial port.
+ *
+ * @author Hunter Flechsig
  */
-target C {/**
- * Blink the default LED on the
- * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
- * @author Abhi Gundrala
- * @author Edward A. Lee
- */
+target C {
   platform: {
     name: "rp2040",
     board: "pololu_3pi_2040_robot"

@@ -1,8 +1,8 @@
 /**
- * Display encoder measurements from the wheels of the
- * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
- * @author Abhi Gundrala
- * @author Edward A. Lee
+ * Drive the square path, and back away from obstacles.
+ * A bump on either side stops the robot, reverses for 750 ms, then turns.
+ *
+ * @author Hunter Flechsig
  */
 target C {
   platform: {

@@ -1,8 +1,9 @@
 /**
- * Display encoder measurements from the wheels of the
- * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
- * @author Abhi Gundrala
- * @author Edward A. Lee
+ * Drive a square on the Pololu 3pi+ 2040.
+ * A side ends when either wheel has traveled 50 cm. A corner ends when
+ * integrated yaw has changed by 80 degrees. Then the cycle repeats.
+ *
+ * @author Hunter Flechsig
  */
 target C {
   platform: {

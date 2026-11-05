@@ -1,0 +1,106 @@
+/**
+ * Drive forward on the Pololu 3pi+ 2040 and turn away from dark edges.
+ *
+ * After a 10 second line-sensor calibration, both wheels run at power 0.2.
+ * Reflectance above 200 on the left pair or the right pair backs the robot
+ * up for 200 ms, spins it for 200 ms, and then drives forward again.
+ *
+ * @author Hunter Flechsig
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+import Line from "lib/Line.lf"
+
+reactor Robot {
+  timer t(0, 100 ms)
+  state avoid_direction: int
+
+  motors = new Motors()
+  display = new Display()
+  line = new Line()
+
+  reaction(startup) -> display.line0, display.line1, display.line2 {=
+    lf_set(display.line0, "CALIBRATING");
+    lf_set(display.line1, "Roll robot over");
+    lf_set(display.line2, "light and dark.");
+  =}
+
+  reaction(t) -> line.trigger {=
+    lf_set(line.trigger, true);
+  =}
+
+  initial mode CALIBRATION {
+    timer end_calibration(10 s)
+
+    reaction(end_calibration) -> reset(DRIVING), line.calibrate {=
+      lf_set(line.calibrate, false);
+      lf_set_mode(DRIVING);
+    =}
+  }
+
+  mode DRIVING {
+    reaction(reset) -> motors.left_power, motors.right_power, display.line3 {=
+      lf_set(display.line3, "DRIVING");
+      lf_set(motors.left_power, 0.2f);
+      lf_set(motors.right_power, 0.2f);
+    =}
+
+    reaction(line.reflect) -> reset(AVOID), display.line0, display.line1, display.line2 {=
+      if (line.reflect->value[0] > 200 || line.reflect->value[1] > 200) {
+        lf_set(display.line0, "LEFT");
+        self->avoid_direction = 1;
+        lf_set_mode(AVOID);
+      } else {
+        lf_set(display.line0, "");
+      }
+
+      if (line.reflect->value[3] > 200 || line.reflect->value[4] > 200) {
+        lf_set(display.line1, "RIGHT");
+        self->avoid_direction = 0;
+        lf_set_mode(AVOID);
+      } else {
+        lf_set(display.line0, "");
+      }
+    =}
+  }
+
+  mode AVOID {
+    logical action turn
+    logical action forward
+
+    reaction(reset) -> turn, motors.left_power, motors.right_power, display.line3 {=
+      lf_set(motors.left_power, -0.1f);
+      lf_set(motors.right_power, -0.1f);
+      lf_schedule(turn, MSEC(200));
+    =}
+
+    reaction(turn) -> forward, motors.left_power, motors.right_power, display.line3 {=
+      if (self->avoid_direction) {
+        lf_set(motors.left_power, 0.1f);
+        lf_set(motors.right_power, -0.1f);
+        lf_set(display.line3, "AVOID LEFT");
+      } else {
+        lf_set(motors.left_power, -0.1f);
+        lf_set(motors.right_power, 0.1f);
+        lf_set(display.line3, "AVOID RIGHT");
+      }
+      lf_schedule(forward, MSEC(200));
+    =}
+
+    reaction(forward) -> reset(DRIVING) {=
+      lf_set_mode(DRIVING);
+    =}
+  }
+}
+
+main reactor {
+  robot = new Robot()
+}

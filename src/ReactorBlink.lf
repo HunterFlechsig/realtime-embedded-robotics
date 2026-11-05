@@ -1,3 +1,8 @@
+/**
+ * Blink the onboard LED through the LED reactor.
+ *
+ * @author Hunter Flechsig
+ */
 target C {
   platform: {
     name: "rp2040",

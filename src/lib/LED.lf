@@ -1,3 +1,8 @@
+/**
+ * Drive the onboard LED from a boolean input.
+ *
+ * @author Hunter Flechsig
+ */
 target C {
   platform: {
     name: "rp2040",

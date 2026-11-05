@@ -1,0 +1,213 @@
+/**
+ * Climb a ramp on the Pololu 3pi+ 2040, then drive back down.
+ *
+ * Calibrate the line sensors, rotate until pitch is uphill and roll is near
+ * zero, then drive. Dark edges trigger a reverse and a spin back toward level
+ * roll. The first time pitch falls below half a degree, turn around using the
+ * gyroscope and keep driving with the roll steering reversed.
+ *
+ * Wheel speed is closed-loop. MotorsWithFeedback is the provided PI controller.
+ *
+ * @author Hunter Flechsig
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Line from "lib/Line.lf"
+import Tilt from "lib/Tilt.lf"
+import Accelerometer from "lib/IMU.lf"
+import GyroAngle from "lib/IMU.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Encoders from "lib/Encoders.lf"
+
+preamble {=
+  #include <math.h>
+  #include <stdio.h>
+=}
+
+reactor Robot {
+  timer t(0, 50 ms)
+  state avoid_direction: int
+  state turned_around: bool = false
+
+  motors = new MotorsWithFeedback()
+  display = new Display()
+  line = new Line()
+  a = new Accelerometer()
+  tilt = new Tilt()
+  e0 = new Encoders()
+
+  a.x -> tilt.x
+  a.y -> tilt.y
+  a.z -> tilt.z
+
+  e0.right -> motors.right
+  e0.left -> motors.left
+
+  reaction(startup) -> display.line0, display.line1, display.line2 {=
+    lf_set(display.line0, "CALIBRATING");
+    lf_set(display.line1, "Roll robot over");
+    lf_set(display.line2, "light and dark.");
+  =}
+
+  reaction(t) -> line.trigger, a.trigger, e0.trigger {=
+    lf_set(line.trigger, true);
+    lf_set(a.trigger, true);
+    lf_set(e0.trigger, true);
+  =}
+
+  reaction(tilt.roll) -> display.line1 {=
+    static char buf0[17];
+    snprintf(buf0, 17, "roll:%2.4f", tilt.roll->value);
+    lf_set(display.line1, buf0);
+  =}
+
+  initial mode CALIBRATION {
+    timer end_calibration(10 s)
+
+    reaction(end_calibration) -> reset(TURN_UP), line.calibrate {=
+      lf_set(line.calibrate, false);
+      lf_set_mode(TURN_UP);
+    =}
+  }
+
+  mode TURN_UP {
+    reaction(reset) -> motors.right_speed, motors.left_speed {=
+      lf_set(motors.left_speed, 0.1f);
+      lf_set(motors.right_speed, -0.1f);
+    =}
+
+    reaction(tilt.roll, tilt.pitch) -> reset(DRIVING), motors.right_speed, motors.left_speed {=
+      if (tilt.pitch->value > 0 && fabsf(tilt.roll->value) <= 1.0) {
+        lf_set_mode(DRIVING);
+      }
+    =}
+  }
+
+  mode STOP {
+    reaction(reset) -> motors.right_speed, motors.left_speed, display.line0, display.line1 {=
+      lf_set(motors.left_speed, 0.0f);
+      lf_set(motors.right_speed, 0.0f);
+      lf_set(display.line0, "STOPPED");
+      lf_set(display.line1, "");
+    =}
+  }
+
+  mode DRIVING {
+    reaction(reset) -> motors.left_speed, motors.right_speed, display.line3 {=
+      lf_set(display.line3, "DRIVING");
+      lf_set(motors.left_speed, 0.2f);
+      lf_set(motors.right_speed, 0.2f);
+    =}
+
+    reaction(line.reflect) -> reset(AVOID), display.line0, display.line1 {=
+      if (line.reflect->value[0] > 200 || line.reflect->value[1] > 200) {
+        lf_set(display.line0, "LEFT");
+        self->avoid_direction = 1;
+        lf_set_mode(AVOID);
+      } else {
+        lf_set(display.line0, "");
+      }
+
+      if (line.reflect->value[3] > 200 || line.reflect->value[4] > 200) {
+        lf_set(display.line0, "RIGHT");
+        self->avoid_direction = 0;
+        lf_set_mode(AVOID);
+      } else {
+        lf_set(display.line0, "");
+      }
+    =}
+
+    reaction(tilt.pitch) -> reset(TURN_AROUND), reset(STOP), display.line2, display.line1 {=
+      if (tilt.pitch->value < 0.5 && !self->turned_around) {
+        self->turned_around = true;
+        lf_set_mode(TURN_AROUND);
+      }
+    =}
+
+    reaction(tilt.roll) -> motors.right_speed, motors.left_speed {=
+      if (self->turned_around) {
+        if (tilt.roll->value < -0.5) {
+          lf_set(motors.left_speed, (0.2 - fabsf(tilt.roll->value) * 0.01));
+        }
+        if (tilt.roll->value > 0.5) {
+          lf_set(motors.right_speed, (0.2 - fabsf(tilt.roll->value) * 0.01));
+        }
+      } else {
+        if (tilt.roll->value < -0.5) {
+          lf_set(motors.right_speed, (0.2 - fabsf(tilt.roll->value) * 0.01));
+        }
+        if (tilt.roll->value > 0.5) {
+          lf_set(motors.left_speed, (0.2 - fabsf(tilt.roll->value) * 0.01));
+        }
+      }
+    =}
+  }
+
+  mode AVOID {
+    logical action turn
+    reset state turning: bool = false
+
+    reaction(reset) -> turn, motors.left_speed, motors.right_speed, display.line3 {=
+      lf_set(motors.left_speed, -0.1f);
+      lf_set(motors.right_speed, -0.1f);
+      lf_schedule(turn, MSEC(500));
+    =}
+
+    reaction(turn) -> motors.left_speed, motors.right_speed, display.line3 {=
+      if (self->avoid_direction) {
+        lf_set(motors.left_speed, 0.1f);
+        lf_set(motors.right_speed, -0.1f);
+        lf_set(display.line3, "AVOID LEFT");
+      } else {
+        lf_set(motors.left_speed, -0.1f);
+        lf_set(motors.right_speed, 0.1f);
+        lf_set(display.line3, "AVOID RIGHT");
+      }
+      self->turning = true;
+    =}
+
+    reaction(tilt.roll) -> reset(DRIVING) {=
+      if (fabsf(tilt.roll->value) <= 0.5 && self->turning) {
+        lf_set_mode(DRIVING);
+      }
+    =}
+  }
+
+  mode TURN_AROUND {
+    gyro = new GyroAngle()
+
+    reset state angle: float = 0
+    reset state baseline_a: bool = false
+
+    reaction(t) -> gyro.trigger {=
+      lf_set(gyro.trigger, true);
+    =}
+
+    reaction(reset) -> motors.left_speed, motors.right_speed {=
+      lf_set(motors.left_speed, -0.1f);
+      lf_set(motors.right_speed, 0.1f);
+    =}
+
+    reaction(gyro.z) -> reset(DRIVING) {=
+      if (!self->baseline_a) {
+        self->angle = gyro.z->value;
+        self->baseline_a = true;
+      }
+      float diff = gyro.z->value - self->angle;
+      if (diff >= 160.0f) {
+        lf_set_mode(DRIVING);
+      }
+    =}
+  }
+}
+
+main reactor {
+  robot = new Robot()
+}

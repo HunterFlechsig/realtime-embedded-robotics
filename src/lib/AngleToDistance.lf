@@ -1,4 +1,9 @@
-
+/**
+ * Convert a wheel-encoder angle in degrees to distance traveled in centimeters.
+ * The Pololu wheel diameter used here is 3.175 cm.
+ *
+ * @author Hunter Flechsig
+ */
 target C {
   platform: {
     name: "rp2040",
@@ -9,7 +14,6 @@ target C {
 
 preamble {=
   #include <math.h>
-  // others
 =}
 
 reactor AngleToDistance {
@@ -17,7 +21,7 @@ reactor AngleToDistance {
   output distance_cm: float
 
   preamble {=
-    #define WHEEL_DIAMETER_CM 3.175f // Distance between wheels in cm.
+    #define WHEEL_DIAMETER_CM 3.175f // Wheel diameter in cm.
   =}
 
   reaction(angle_degrees) -> distance_cm {=

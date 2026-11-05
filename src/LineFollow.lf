@@ -1,0 +1,116 @@
+/**
+ * Follow a dark line on the Pololu 3pi+ 2040 until the line ends.
+ *
+ * After a 6 second calibration, drive straight at 0.1 m/s. If the leftmost
+ * reflectance sensor reads above 200, pivot by driving only the right wheel.
+ * If the rightmost sensor does, drive only the left wheel. Resume straight
+ * travel when that outer sensor clears. Stop when all five sensors read below
+ * 200, which is the light surface at the end of the line.
+ *
+ * Wheel speed is closed-loop. MotorsWithFeedback is the provided PI controller.
+ *
+ * @author Hunter Flechsig
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Line from "lib/Line.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Encoders from "lib/Encoders.lf"
+
+reactor Robot {
+  timer t(0, 50 ms)
+  state avoid_direction: int
+
+  motors = new MotorsWithFeedback()
+  display = new Display()
+  line = new Line()
+  e0 = new Encoders()
+
+  e0.right -> motors.right
+  e0.left -> motors.left
+
+  reaction(startup) -> display.line0 {=
+    lf_set(display.line0, "CALIBRATING");
+  =}
+
+  reaction(t) -> line.trigger, e0.trigger {=
+    lf_set(line.trigger, true);
+    lf_set(e0.trigger, true);
+  =}
+
+  initial mode CALIBRATION {
+    timer end_calibration(6 s)
+
+    reaction(end_calibration) -> reset(DRIVING), line.calibrate {=
+      lf_set(line.calibrate, false);
+      lf_set_mode(DRIVING);
+    =}
+  }
+
+  mode STOP {
+    reaction(reset) -> motors.right_speed, motors.left_speed, display.line0 {=
+      lf_set(motors.left_speed, 0.0f);
+      lf_set(motors.right_speed, 0.0f);
+      lf_set(display.line0, "END OF LINE");
+    =}
+  }
+
+  mode DRIVING {
+    reaction(reset) -> motors.left_speed, motors.right_speed, display.line0 {=
+      lf_set(display.line0, "IN LINE");
+      lf_set(motors.left_speed, 0.1f);
+      lf_set(motors.right_speed, 0.1f);
+    =}
+
+    reaction(line.reflect) -> reset(AVOID), reset(STOP) {=
+      if (line.reflect->value[0] > 200) {
+        self->avoid_direction = 1;
+        lf_set_mode(AVOID);
+      }
+
+      if (line.reflect->value[4] > 200) {
+        self->avoid_direction = 0;
+        lf_set_mode(AVOID);
+      }
+
+      if (line.reflect->value[0] < 200 && line.reflect->value[1] < 200 && line.reflect->value[2] < 200 && line.reflect->value[3] < 200 && line.reflect->value[4] < 200) {
+        lf_set_mode(STOP);
+      }
+    =}
+  }
+
+  mode AVOID {
+    reaction(reset) -> motors.left_speed, motors.right_speed, display.line0 {=
+      if (self->avoid_direction) {
+        lf_set(motors.right_speed, 0.2f);
+        lf_set(motors.left_speed, 0.0f);
+        lf_set(display.line0, "AVOID LEFT");
+      } else {
+        lf_set(motors.right_speed, 0.0f);
+        lf_set(motors.left_speed, 0.2f);
+        lf_set(display.line0, "AVOID RIGHT");
+      }
+    =}
+
+    reaction(line.reflect) -> reset(DRIVING) {=
+      if (line.reflect->value[0] < 200 && self->avoid_direction) {
+        lf_set_mode(DRIVING);
+      }
+
+      if (line.reflect->value[4] < 200 && !self->avoid_direction) {
+        lf_set_mode(DRIVING);
+      }
+    =}
+  }
+}
+
+main reactor {
+  robot = new Robot()
+}
