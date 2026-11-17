@@ -1,10 +1,12 @@
-# CSE 522: Real-Time Embedded Robotics
+# Ramp-Climbing & Line-Following Robot (RP2040, Lingua Franca)
 
-Lingua Franca programs that drive a [Pololu 3pi+ 2040](https://www.pololu.com/product/5001) on an RP2040. The robot climbs a ramp and comes back down, follows a dark line to its end, and runs the smaller navigation and sensing programs that those two behaviors are built from.
+A [Pololu 3pi+ 2040](https://www.pololu.com/product/5001) climbs a ramp and drives back down. A second program follows a dark line until the line ends. Both are Lingua Franca reactors on an RP2040. Hardware reference: [Pololu 3pi+ 2040 user's guide](https://www.pololu.com/docs/0J86).
 
-This is coursework from Arizona State University, CSE 522: Real-Time Embedded Systems, Fall 2025. Ramp climbing and line following were team coursework. Hunter Flechsig ([HunterFlechsig](https://github.com/HunterFlechsig), hunterflechsig@gmail.com).
+- **Ramp** ([`src/HillClimb.lf`](src/HillClimb.lf)). Calibrate, face uphill, drive, back off a dark edge, turn around on the flat top, and descend.
+- **Line** ([`src/LineFollow.lf`](src/LineFollow.lf)). Drive straight, pivot when an outer sensor sees the line, and stop when the line ends.
+- **Under those.** Square driving, bump avoidance, encoder distance, tilt, and LED timing. The thresholds and the mode diagram are in [What the robot does](#what-the-robot-does).
 
-Hardware reference: [Pololu 3pi+ 2040 user's guide](https://www.pololu.com/docs/0J86).
+Hunter Flechsig ([HunterFlechsig](https://github.com/HunterFlechsig), hunterflechsig@gmail.com) wrote the programs in this repository for Arizona State University, CSE 522: Real-Time Embedded Systems, Fall 2025. Ramp climbing and line following were Group 10 labs. His part of that work is the controllers checked in here: the ramp mode machine, the edge detector, the edge avoider, and the line follower. The square, bump, distance, drive, tilt, and LED programs are his individual labs. The PI speed controller and the IMU, line, bump, motor, and display reactors came with the [course template](https://github.com/lf-lang/lf-3pi-template).
 
 ## What the robot does
 
@@ -145,4 +147,4 @@ This repository started from [lf-3pi-template](https://github.com/lf-lang/lf-3pi
 - The [Pololu 3pi+ 2040 robot library](https://github.com/pololu/pololu-3pi-2040-robot) by David Grayson, under `robot-lib/`, plus the SH1106 display code by Adam Green. See [`LICENSE.txt`](LICENSE.txt).
 - The Pico emulator under `test/`, based on [Wokwi](https://wokwi.com) and [rp2040js](https://github.com/wokwi/rp2040js).
 
-The ramp, line, square, bump, distance, drive, tilt, and LED programs under `src/` listed above, plus `Tilt.lf`, `AngleToDistance.lf`, and `LED.lf`, are the coursework. The PI speed loop those programs call is the supplied `MotorsWithFeedback` reactor.
+The ramp, line, square, bump, distance, drive, tilt, and LED programs under `src/` listed above, plus `Tilt.lf`, `AngleToDistance.lf`, and `LED.lf`, are Hunter Flechsig's coursework. The ramp and line controllers are his part of the Group 10 labs. The PI speed loop those programs call is the supplied `MotorsWithFeedback` reactor.
